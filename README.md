@@ -4,7 +4,7 @@ Server-side invoice creation and webhook signature verification for SatLane Bitc
 
 ## Install
 
-PHP 8.1 or newer and Guzzle 7 are required. Once 0.2 is published:
+PHP 8.1 or newer and Guzzle 7 are required. Install the published 0.2 release:
 
 ```bash
 composer require satlane/satlane-php:^0.2

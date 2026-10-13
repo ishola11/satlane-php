@@ -1,6 +1,6 @@
 # Upgrade to 0.2
 
-This release is prepared locally and has not been published yet.
+Version 0.2.0 was published on 13 October 2026.
 
 - Invoice creation automatically adds a stable key for retries within one call. Persist and pass an explicit idempotency key when retrying an order across separate calls.
 - Test keys send `SatLane-Version: 2026-10-05`. Use `contractVersion: null` only when deliberately targeting the legacy API contract.
