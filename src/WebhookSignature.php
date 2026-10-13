@@ -62,12 +62,18 @@ final class WebhookSignature
 
         $parts = [];
         foreach (explode(',', $signatureHeader) as $piece) {
-            if (!str_contains($piece, '=')) continue;
+            if (!str_contains($piece, '=')) {
+                continue;
+            }
             [$k, $v] = explode('=', $piece, 2);
-            $parts[trim($k)] = trim($v);
+            $k = trim($k);
+            if (isset($parts[$k])) {
+                throw new SignatureException(SignatureException::MALFORMED_HEADER, 'Duplicate signature header field.');
+            }
+            $parts[$k] = trim($v);
         }
 
-        if (!isset($parts['t']) || !isset($parts['v1'])) {
+        if (!isset($parts['t']) || !isset($parts['v1']) || !preg_match('/^[0-9]{1,12}$/D', $parts['t']) || !preg_match('/^[a-f0-9]{64}$/D', $parts['v1']) || $toleranceSeconds < 0) {
             throw new SignatureException(
                 SignatureException::MALFORMED_HEADER,
                 'X-SatLane-Signature must contain t=<ts>,v1=<hex>.',

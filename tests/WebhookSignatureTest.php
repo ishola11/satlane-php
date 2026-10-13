@@ -12,6 +12,19 @@ final class WebhookSignatureTest extends TestCase
 {
     private const SECRET = 'whsec_test_abc123';
 
+    public function testNonNumericTimestampAndDuplicateFieldsAreRejected(): void
+    {
+        $body = '{}';
+        $valid = WebhookSignature::sign($body, self::SECRET);
+        foreach (['t='.time().'abc,v1='.str_repeat('a', 64),$valid.',t='.time()] as $header) {
+            try {
+                WebhookSignature::verify($body, $header, self::SECRET);
+                self::fail('Malformed signature accepted.');
+            } catch (SignatureException $e) {
+                self::assertSame(SignatureException::MALFORMED_HEADER, $e->reason);
+            }
+        }
+    }
     public function testVerifyAcceptsAValidSignature(): void
     {
         $body = '{"event_id":"evt_1","event_type":"invoice.paid"}';

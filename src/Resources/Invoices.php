@@ -7,7 +7,7 @@ namespace Satlane\Resources;
 use Satlane\Client;
 
 /**
- * Invoice resource — create, list, retrieve, cancel, simulate.
+ * Invoice resource : create, list, retrieve, cancel, simulate.
  *
  *   $client->invoices->create([...]);
  *   $client->invoices->retrieve('22872e14-...');
@@ -21,7 +21,7 @@ final class Invoices
 
     /**
      * @param array<string,mixed> $params
-     *   See https://satlane.com/docs/api — `amount` + `currency` OR
+     *   See https://satlane.com/docs/api : `amount` + `currency` OR
      *   `amount_sats`, plus optional `order_ref`, `callback_url`,
      *   `success_url`, `buyer_email`, `expires_in_minutes`, `metadata`.
      * @param string|null $idempotencyKey
@@ -34,6 +34,7 @@ final class Invoices
      */
     public function create(array $params, ?string $idempotencyKey = null): array
     {
+        $idempotencyKey ??= bin2hex(random_bytes(16));
         $headers = [];
         if ($idempotencyKey !== null) {
             $headers['Idempotency-Key'] = $idempotencyKey;
@@ -66,11 +67,12 @@ final class Invoices
     }
 
     /**
-     * @return array<string,mixed> Timeline of status transitions + payments.
+     * @deprecated Dashboard session and TOTP are required; no API-key endpoint.
+     * @throws \LogicException Always.
      */
     public function timeline(string $id): array
     {
-        return $this->client->request('GET', "/v1/invoices/{$id}/timeline");
+        throw new \LogicException('Invoice timelines require a merchant dashboard session and TOTP. Use retrieve() for the API-key invoice snapshot or inspect the timeline in the dashboard.');
     }
 
     /**
@@ -83,8 +85,8 @@ final class Invoices
     }
 
     /**
-     * Test-mode only. Fire a synthetic webhook event for any state
-     * transition without waiting for chain activity. Useful for CI.
+     * Test-mode only. Run a supported Sandbox simulation action without
+     * waiting for chain activity. Reuse action_id for a retried action.
      *
      *   $client->invoices->simulate($id, ['event' => 'paid']);
      *   $client->invoices->simulate($id, ['event' => 'underpaid', 'amount_sats' => '5000']);
@@ -93,15 +95,16 @@ final class Invoices
      */
     public function simulate(string $id, array $params): array
     {
+        $params['action_id'] ??= bin2hex(random_bytes(16));
         return $this->client->request('POST', "/v1/invoices/{$id}/simulate", $params);
     }
 
     /**
      * Test-mode shorthand for "this invoice was paid".
      */
-    public function simulatePaid(string $id): array
+    public function simulatePaid(string $id, ?string $actionId = null): array
     {
-        return $this->client->request('POST', "/v1/invoices/{$id}/simulate_paid");
+        return $this->client->request('POST', "/v1/invoices/{$id}/simulate_paid", ['action_id' => $actionId ?? bin2hex(random_bytes(16))]);
     }
 
     /**
@@ -111,7 +114,7 @@ final class Invoices
      */
     public function publicSnapshot(string $id): array
     {
-        // Strip auth for this call — endpoint is intentionally public.
-        return $this->client->request('GET', "/pay/invoices/{$id}");
+        // Strip auth for this call : endpoint is intentionally public.
+        return $this->client->request('GET', "/pay/invoices/{$id}", authenticated: false);
     }
 }

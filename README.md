@@ -1,176 +1,94 @@
-# satlane-php
+# SatLane PHP SDK
 
-Official PHP SDK for [SatLane](https://satlane.com) — non-custodial Bitcoin payments. Vendor keeps the keys, SatLane handles the checkout and payment detection.
+Server-side invoice creation and webhook signature verification for SatLane Bitcoin payments. The 0.2 release updates the SDK for the wallet-free Sandbox contract and safer retries.
+
+## Install
+
+PHP 8.1 or newer and Guzzle 7 are required. Once 0.2 is published:
 
 ```bash
-composer require satlane/satlane-php
+composer require satlane/satlane-php:^0.2
 ```
 
-Requires PHP 8.1+.
+Before publication, use the monorepo package through a Composer path repository. Never place your API key in browser JavaScript.
 
-## Quickstart
+## Create a payment request
 
 ```php
-use Satlane\Client;
-
-$client = new Client(apiKey: getenv('SATLANE_API_KEY'));
-
-$invoice = $client->invoices->create(
-    [
-        'amount'       => 49.99,
-        'currency'     => 'USD',
-        'order_ref'    => 'ORD-12345',
-        'callback_url' => 'https://yourshop.com/webhooks/satlane',
-        'success_url'  => 'https://yourshop.com/orders/12345/thanks',
-    ],
-    idempotencyKey: 'order-12345-checkout',
-);
-
+$client = new \Satlane\Client(apiKey: getenv('SATLANE_API_KEY'));
+$invoice = $client->invoices->create([
+    'amount' => 49.99,
+    'currency' => 'USD',
+    'order_ref' => 'ORDER-123',
+    'buyer_email' => 'buyer@example.com',
+], idempotencyKey: 'order-123-checkout-1');
 header('Location: ' . $invoice['hosted_checkout_url']);
-exit;
 ```
 
-That's the full happy path. The buyer lands on the hosted checkout, pays with any Bitcoin wallet (or Cash App / Strike / Coinbase via the built-in guides), and you get a signed webhook when the payment confirms.
+Use a store-scoped Test key (`sl_test_...`) or Live key (`sl_live_...`). An API key is bound to one store and environment. Keep a separate client for each connection. Configure webhook endpoints and signing secrets in the merchant dashboard; `callback_url` does not create a webhook endpoint.
 
-## Receiving webhooks
+A Test client sends `SatLane-Version: 2026-10-05` automatically. Wallet-free Sandbox must be enabled on the server and does not require a wallet or real Bitcoin. Unsupported/disabled contract errors are surfaced rather than silently falling back. A legacy server can be selected explicitly with `contractVersion: null`; it uses the legacy server's test-wallet rules. Live requires explicit store activation, an active mainnet receiving wallet, account eligibility and synchronized chain services. Choosing the Live view alone does not activate a store.
 
-```php
-use Satlane\WebhookSignature;
-use Satlane\Exceptions\SignatureException;
-
-$rawBody = file_get_contents('php://input');
-$header  = $_SERVER['HTTP_X_SATLANE_SIGNATURE'] ?? '';
-
-try {
-    WebhookSignature::verify(
-        rawBody:        $rawBody,
-        signatureHeader: $header,
-        secrets:        getenv('SATLANE_WEBHOOK_SECRET'),
-    );
-} catch (SignatureException $e) {
-    http_response_code(400);
-    exit;
-}
-
-$event = json_decode($rawBody, true);
-
-// IMPORTANT: dedupe by event_id. Retries deliver the same event_id, and
-// top-up payments produce repeated invoice.underpaid events.
-if (alreadyProcessed($event['event_id'])) {
-    http_response_code(200);
-    exit;
-}
-
-match ($event['event_type']) {
-    'invoice.paid', 'invoice.late_paid' => fulfillOrder($event['data']['invoice']),
-    'invoice.underpaid'                 => onShortPayment($event['data']['invoice']),
-    'invoice.overpaid'                  => onOverpayment($event['data']['invoice']),
-    'invoice.payment_reverted'          => reverseOrder($event['data']['invoice']),
-    'invoice.expired',
-    'invoice.cancelled'                 => null,
-    default                             => null,
-};
-
-http_response_code(200);
-```
-
-**Always verify against the raw request body**, not parsed JSON. Body parsers discard the bytes the signature is computed over.
-
-## Top-up payments
-
-If the buyer underpays, the invoice transitions to `underpaid` and the watcher keeps listening. If they send a follow-up transaction, the watcher automatically merges the payments and the invoice transitions to `paid` (or `late_paid` / `overpaid` depending on the new total).
-
-That means your handler can receive **multiple `invoice.underpaid` events** for the same invoice before `invoice.paid` lands. Dedupe by `event_id` only — never by `(invoice_id, event_type)`.
-
-The hosted checkout surfaces a "Send remaining X sats" CTA with a fresh `bitcoin:` URI for only the missing amount, so the buyer doesn't double-pay by rescanning the original QR.
-
-## Error handling
+`Client::fromEnv()` reads `SATLANE_API_KEY` and optional `SATLANE_API_BASE`. For custom configuration, use the constructor:
 
 ```php
-use Satlane\Exceptions\ApiException;
-
-try {
-    $invoice = $client->invoices->create([...]);
-} catch (ApiException $e) {
-    if ($e->code() === 'gap_limit_exceeded') {
-        // Wallet has too many unused addresses pre-derived.
-        // Bump your Electrum gap limit or rotate xpubs.
-    }
-    if ($e->code() === 'no_active_xpub') {
-        // Vendor needs to add an xpub on this store.
-    }
-    if ($e->isRetryable()) {
-        // 429 / 503 / network error. SDK already retried 3 times by
-        // default — surface a "try again later" to the user.
-    }
-    // Always log $e->requestId() — it correlates to our server logs.
-    logger()->error('satlane create failed', [
-        'code'       => $e->code(),
-        'status'     => $e->status,
-        'request_id' => $e->requestId(),
-    ]);
-    throw $e;
-}
-```
-
-Full error catalog: [satlane.com/docs/errors](https://satlane.com/docs/errors).
-
-## Configuration
-
-```php
-new Client(
-    apiKey:        'sl_live_...',
-    baseUrl:       'https://api.satlane.com',  // default
-    timeoutSeconds: 30,                        // default
-    maxRetries:    3,                          // default; retries 5xx + 429 + network errors
+$client = new \Satlane\Client(
+    apiKey: $key,
+    baseUrl: 'https://api.satlane.com',
+    timeoutSeconds: 30,
+    maxRetries: 3,
+    contractVersion: '2026-10-05',
 );
 ```
 
-Or from env vars:
+## Invoice methods
+
+- `create($params, $idempotencyKey)` returns the invoice array.
+- `list($query)` returns invoices plus pagination metadata; pass the returned cursor for the next page.
+- `retrieve($id)` returns the authenticated invoice array.
+- `timeline($id)` is a deprecated dashboard-only operation and fails with guidance; use `retrieve` for an API-key snapshot.
+- `cancel($id)` follows the API's current cancellation eligibility rules.
+- `simulate($id, ['event' => 'paid', 'action_id' => 'scenario-1'])` and `simulatePaid($id, 'scenario-1')` exercise permitted Sandbox transitions. They cannot simulate Live payments. A missing action ID is generated per call; persist an explicit ID when retrying the same action across separate calls.
+- `publicSnapshot($id)` reads the public checkout snapshot without sending your API key.
+
+Response arrays retain extra fields, including `payment_phase`, `payment_summary`, nullable Sandbox destinations and optional `checkout_urls`. Use `hosted_checkout_url` for the standard hosted checkout. A browser should not receive the private API key.
+
+## Retry and error handling
+
+The SDK retries safe reads and requests carrying an idempotency key after network errors, 429 or 5xx. It does not retry other mutations automatically. `Retry-After` supports seconds and HTTP dates, with a 60-second maximum delay.
+
+Invoice creation generates one key per method call if omitted, preserving it through internal retries. **Provide and persist your own key for order-level retries across separate calls.** The server's idempotency retention is 24 hours; keep the invoice ID on your order rather than assuming indefinite deduplication.
+
+`ApiException` exposes `status`, `code()`, `requestId()` and `details()`. A network failure has status 0; invalid JSON success responses produce `invalid_response`. `isRetryable()` describes transient error categories, not permission to blindly retry a payment mutation. Billing locks and readiness errors should be shown clearly to the merchant.
+
+## Receive webhooks
+
+Verify the exact raw request bytes before parsing or acting on them:
 
 ```php
-$client = Client::fromEnv(); // reads SATLANE_API_KEY + SATLANE_API_BASE
+\Satlane\WebhookSignature::verify(
+    file_get_contents('php://input'),
+    $_SERVER['HTTP_X_SATLANE_SIGNATURE'] ?? '',
+    [$currentSecret, $previousSecret],
+);
 ```
 
-## What the SDK covers
+Include a previous secret only while your rotation policy allows it. The default timestamp tolerance is five minutes. Catch `SignatureException` and return 400 for invalid signatures. The wire format remains `t=<timestamp>,v1=<HMAC-SHA256>` over `<timestamp>.<raw_body>`.
 
-| Surface | Method |
-|---|---|
-| Create an invoice | `$client->invoices->create([...], idempotencyKey: '...')` |
-| List invoices | `$client->invoices->list([...])` |
-| Retrieve | `$client->invoices->retrieve($id)` |
-| Timeline | `$client->invoices->timeline($id)` |
-| Cancel | `$client->invoices->cancel($id)` |
-| Test-mode simulate | `$client->invoices->simulate($id, ['event' => 'paid'])` |
-| Public snapshot (no auth) | `$client->invoices->publicSnapshot($id)` |
-| Webhook endpoints CRUD | `$client->webhooks->{list, create, update, delete, rotate, test}($storeId, ...)` |
-| Delivery history | `$client->webhooks->deliveries($storeId)` |
-| Verify a webhook | `WebhookSignature::verify($rawBody, $header, $secret)` |
+Durably save/deduplicate `event_id` and complete required processing before acknowledging with 2xx, or commit a durable job before acknowledgement. Database or processing failures must not be mistaken for completed duplicates. Every business fulfillment action must also be idempotent. Laravel applications should use `satlane/satlane-laravel` for the built-in receiver.
 
-For endpoints we haven't wrapped yet, drop to the raw HTTP:
+Confirmed `paid` and `late_paid` events are normal fulfillment triggers. Review `overpaid` according to your business policy. Never fulfill from `payment_seen` alone, or ask for another full payment while an already received balance is still confirming. Process `payment_reverted` and review events. Events may be duplicated or delivered out of order; signatures authenticate them but do not establish ordering.
 
-```php
-$client->request('POST', '/v1/some/new/endpoint', ['key' => 'value']);
+## Webhook management migration
+
+The old `$client->webhooks` management helpers target dashboard session/TOTP routes, not API-key routes. In 0.2 they fail immediately with actionable guidance instead of sending requests that cannot authenticate. Set up and manage endpoints in the SatLane dashboard. Signature verification remains supported.
+
+## Development
+
+```bash
+composer install
+composer validate --strict
+composer test
 ```
 
-## Going live checklist
-
-1. Store has a mainnet xpub registered.
-2. Store's `test_mode` toggle is off.
-3. `SATLANE_API_KEY` is the `sl_live_...` variant.
-4. Webhook URL is HTTPS and reachable from the public internet.
-5. Your handler responds `2xx` quickly (`<10s` timeout), persists the side effect synchronously, and dedupes by `event_id`.
-6. You verify the signature on every request.
-7. You handle `invoice.payment_reverted` (rare but real — reverse fulfillment on chain reorgs).
-
-## Links
-
-- [Quickstart guide](https://satlane.com/docs/quickstart)
-- [API reference](https://satlane.com/docs/api)
-- [Webhook events](https://satlane.com/docs/events)
-- [Invoice statuses](https://satlane.com/docs/statuses)
-- [Errors](https://satlane.com/docs/errors)
-
-## License
-
-MIT.
+See [AI integration guidance](AI-INTEGRATION.md), [upgrade notes](UPGRADING.md) and https://satlane.com/docs. The monorepo owns the source; dedicated public repositories are release mirrors.

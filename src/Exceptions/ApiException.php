@@ -54,8 +54,15 @@ class ApiException extends SatlaneException
      */
     public function isRetryable(): bool
     {
-        if ($this->status === 429) return true;
-        if ($this->status >= 500) return true;
+        if ($this->status === 0) {
+            return true;
+        }
+        if ($this->status === 429) {
+            return true;
+        }
+        if ($this->status >= 500) {
+            return true;
+        }
         return false;
     }
 }

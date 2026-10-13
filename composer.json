@@ -1,14 +1,13 @@
 {
     "name": "satlane/satlane-php",
-    "description": "Official PHP SDK for SatLane — non-custodial Bitcoin payments.",
+    "description": "Official PHP SDK for SatLane : non-custodial Bitcoin payments.",
     "license": "MIT",
     "type": "library",
-    "version": "0.1.0",
     "homepage": "https://satlane.com",
     "support": {
         "docs": "https://satlane.com/docs",
-        "source": "https://github.com/ishola11/satlane",
-        "issues": "https://github.com/ishola11/satlane/issues"
+        "source": "https://github.com/ishola11/satlane-php",
+        "issues": "https://github.com/ishola11/satlane-php/issues"
     },
     "keywords": [
         "bitcoin",
